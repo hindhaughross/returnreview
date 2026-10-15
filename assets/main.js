@@ -403,6 +403,49 @@ async function classifyTicket(text) {
     const result =
         JSON.parse(content);
 
+    // ———————— Deterministic recency checks ————————
+    try {
+        const recentWindow = 2000; // characters from the end of the conversation to prioritise
+        const recentText = text ? text.slice(-recentWindow).toLowerCase() : "";
+
+        // Failure phrases which should force a terminal Failed Booking
+        const FAILURE_RE = /(fallen through|has fallen through|collection fell through|collection has fallen through|collection failed|failed to collect|booking aborted|booking cancelled|cancelled collect|abortive|abort fee of|abort fee charged|failed to attend|no access|driver error|did not proceed|collection unsuccessful|failed booking|unable to collect)/i;
+
+        if (FAILURE_RE.test(recentText) || FAILURE_RE.test(text)) {
+            result.status = "Failed Booking";
+            result.confidence = 0;
+            result.review_required = false;
+            result.reason = result.reason
+                ? result.reason + "; Final message indicates collection failed"
+                : "Final message indicates collection failed";
+
+            // Return early for terminal failures to avoid accidental reclassification
+            return result;
+        }
+
+        // If lease date differs from fleet date and there's no fleet acknowledgement in recent messages, force review
+        const fleetDate = (result.fleet_booked_date || "").trim();
+        const leaseDate = (result.lease_company_date || "").trim();
+
+        if (fleetDate && leaseDate && fleetDate !== leaseDate) {
+            const ACK_RE = /\b(accepted|agreed|acknowledged|we accept|we agree|accepted the change|confirmed|i confirm)\b/i;
+
+            if (!ACK_RE.test(recentText)) {
+                result.status = "Review Required";
+                result.confidence = 70;
+                result.review_required = true;
+                result.category = result.category || "Lease Company Date Change";
+                result.reason = result.reason
+                    ? result.reason + "; Lease date differs from fleet date and no fleet acknowledgement found"
+                    : "Lease date differs from fleet date and no fleet acknowledgement found";
+                // do not return so further normalization can occur
+            }
+        }
+    } catch (err) {
+        console.warn("Deterministic recency checks failed", err);
+    }
+    // ———————— End deterministic checks ————————
+
     // Enforce presence of RETURN_NOTIFY_LEASECO but preserve AI summary:
     // If AI returned "Confirmed" but the original chronology text does not
     // contain RETURN_NOTIFY_LEASECO, force human review and append a
@@ -414,13 +457,17 @@ async function classifyTicket(text) {
         const aiSummary = (result.summary || "").trim();
         const reg = (result.registration || "").replace(/\s+/g, " ").trim();
         const fleetDate = (result.fleet_booked_date || "").trim();
+        const fleetDateFormatted = formatUkDate(fleetDate);
+        const fleetDateDisplay = fleetDateFormatted || fleetDate;
+        const leaseDate = (result.lease_company_date || "").trim();
+        const fleetDateText = fleetDateDisplay;
 
         let baseSummary = aiSummary;
         if (!baseSummary) {
             if (reg && fleetDate) {
-                baseSummary = `Collection confirmed for ${reg} on ${fleetDate}.`;
+                baseSummary = `Collection confirmed for ${reg} on ${fleetDateDisplay}.`;
             } else if (fleetDate) {
-                baseSummary = `Collection confirmed for ${fleetDate}.`;
+                baseSummary = `Collection confirmed for ${fleetDateDisplay}.`;
             } else if (reg) {
                 baseSummary = `Collection confirmed for ${reg}.`;
             } else {
@@ -477,12 +524,10 @@ if (
             .toUpperCase();
 
     const validStandard =
-        /^[A-Z]{2}[0-9]{2}[A-Z]{3}$/
-            .test(reg);
+        /^[A-Z]{2}[0-9]{2}[A-Z]{3}$/.test(reg);
 
     const validNI =
-        /^[A-Z]{3}[0-9]{4}$/
-            .test(reg);
+        /^[A-Z]{3}[0-9]{4}$/.test(reg);
 
     result.registration_valid =
         validStandard ||
