@@ -6,14 +6,18 @@ INSTRUCTIONS:
 - Review the entire chronology; the most recent substantive messages take precedence.
 - Substantive message = any message from Fleet or Lease that includes booking/confirmation/cancellation/abort/rebooking language. Prioritise the last substantive message(s) (look backwards through the chronology to find the final state).
 - Normalize all dates to DD/MM/YYYY. If a date cannot be parsed, leave the date field empty and set "review_required": true with reason.
-- If a lease company explicitly says the originally requested date was unavailable and that they have booked an alternative date instead (phrases such as "not available", "unavailable", "booked in for", "booked for", "rescheduled to", "moved to", "changed to", "instead"), treat the alternative date as the confirmed lease-company collection date. Record the original requested date if it is stated.
+- If a lease company explicitly says the originally requested date was unavailable and that they have booked an alternative date instead (phrases such as "not available", "unavailable", "booked in for", "booked for", "rescheduled to", "moved to", "changed to", "instead"), do NOT automatically mark the booking as "Confirmed". Instead:
+  - set "lease_company_date" to the alternative date provided (if parseable),
+  - set "category" to "Lease Company Date Change",
+  - set "status" to "Review Required",
+  - set "review_required" to true and "confidence" to 70,
+  - include a concise reason explaining the date differs from the fleet request and that customer availability may be affected.
 - If a lease company responds with a confirmed date, but the fleet initial booking email is not present, return "status": "Review Required", "confidence": 70, "review_required": true, and reason "Fleet request not found".
 - When uncertain or missing required evidence, return "status": "Review Required", "confidence": 70, "review_required": true, and a short "reason".
 - If newer emails in the chain indicate a response is required before booking can be confirmed, return "status": "Review Required", "confidence": 70, "review_required": true, and a medium "reason".
 - If final outcome indicates collection did NOT occur, return "status": "Failed Booking" and "confidence": 0.
 - For confirmed bookings, require: fleet_request_found=true AND lease company confirmation AND both dates present and matching. Confidence = 100.
-- If a lease-company proposed/confirmed date change that is accepted and confirmed, use Category = "Lease Company Date Change".
-- If the lease company states an original date was unavailable and booked an alternative date instead, this is a confirmed lease-company date change, even if the alternative date differs from the original fleet date, unless a later fleet message rejects/declines it.
+- If a lease-company proposed/confirmed date change that is accepted and confirmed by fleet (explicit acknowledgement such as "Accepted", "Agreed", or similar), use Category = "Lease Company Date Change" and set status to "Confirmed" with confidence 100. Until explicit fleet acknowledgement is present, treat lease-company changes as requiring human review.
 - Use latest registration string seen (ignore superseded values).
 - If the final outcome is a failed/aborted collection, extract any stated fees/charges and include the exact amount and currency in reason/summary if present.
 - Summary: one short sentence (max 25 words) describing registration/date changes and final outcome.
@@ -32,7 +36,7 @@ CRITICAL FINAL STATE RULE (APPLY BEFORE RETURNING JSON):
       review_required = false
       reason = "Final message indicates collection failed or fell through"
 - If the most recent substantive message requests a rebook, is awaiting carrier response, or says "will advise further" WITHOUT confirming a new date, set status="Review Required", confidence=70, review_required=true, and a short reason.
-- If a lease-company date differs from fleet and fleet has not acknowledged the change (no "Accepted", "Agreed", or similar acknowledgment by fleet in later messages), set status="Review Required" unless the lease company confirms a booked alternative date and the chronology shows no later rejection. In this case, classify it as a lease-company date change and keep the alternative date as the confirmed date.
+- If a lease-company date differs from fleet and fleet has not acknowledged the change (no "Accepted", "Agreed", or similar acknowledgment by fleet in later messages), set status="Review Required". Even when the lease company explicitly books an alternative date, treat it as a review case unless the fleet later acknowledges the change. This preserves customer-availability safety.
 
 OUTPUT JSON (exact keys and types):
 {
@@ -76,7 +80,7 @@ Assistant JSON:
   "reason": "Final message indicates collection failed; awaiting cause and potential rebook."
 }
 
-EXAMPLE B - RESCHEDULED DATE CONFIRMED
+EXAMPLE B - RESCHEDULED DATE (REQUIRES REVIEW)
 Chronology:
 - Fleet: "Please collect on 23/10/2026"
 - Lease: "I have booked the below collection, unfortunately 23rd Friday was not available, so I have booked in for the Thursday 22nd instead."
@@ -85,13 +89,13 @@ Assistant JSON:
   "registration": "",
   "fleet_request_found": true,
   "category": "Lease Company Date Change",
-  "status": "Confirmed",
+  "status": "Review Required",
   "fleet_booked_date": "23/10/2026",
   "lease_company_date": "22/10/2026",
-  "confidence": 100,
-  "review_required": false,
-  "summary": "Collection was rebooked to 22/10/2026 after original date was unavailable.",
-  "reason": "Lease company confirmed the original date was unavailable and booked the collection for the alternative date instead."
+  "confidence": 70,
+  "review_required": true,
+  "summary": "Lease company rebooked to 22/10/2026; fleet acknowledgement required to confirm customer availability.",
+  "reason": "Lease company booked an alternative date; fleet acknowledgement not found — customer may be unavailable on the alternative date."
 }
 
 EXAMPLE LEX - LEX AUTOLEASE CONFIRMS (SPECIAL CASE)
@@ -130,7 +134,7 @@ Assistant JSON:
   "reason": ""
 }
 
-EXAMPLE 2 - LEASE COMPANY DATE CHANGE (confirmed)
+EXAMPLE 2 - LEASE COMPANY DATE CHANGE (CONFIRMED BY FLEET)
 Chronology:
 - Fleet: "Collect on 21/10/2026"
 - Lease: "Can offer 25/10/2026"
