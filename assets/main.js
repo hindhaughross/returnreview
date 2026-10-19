@@ -409,7 +409,7 @@ async function classifyTicket(text) {
         const recentText = text ? text.slice(-recentWindow).toLowerCase() : "";
 
         // Failure phrases which should force a terminal Failed Booking
-        const FAILURE_RE = /(fallen through|has fallen through|collection fell through|collection has fallen through|collection failed|failed to collect|booking aborted|booking cancelled|cancelled collect|abortive|abort fee of|abort fee charged|failed to attend|no access|driver error|did not proceed|collection unsuccessful|failed booking|unable to collect)/i;
+        const FAILURE_RE = /(fallen through|has fallen through|collection fell through|collection has fallen through|collection failed|failed to collect|booking aborted|booking cancelled|cancelled collect|abortive|arranged collection later)/i;
 
         if (FAILURE_RE.test(recentText) || FAILURE_RE.test(text)) {
             result.status = "Failed Booking";
@@ -428,7 +428,7 @@ async function classifyTicket(text) {
         const leaseDate = (result.lease_company_date || "").trim();
 
         if (fleetDate && leaseDate && fleetDate !== leaseDate) {
-            const ACK_RE = /\b(accepted|agreed|acknowledged|we accept|we agree|accepted the change|confirmed|i confirm)\b/i;
+            const ACK_RE = /\b(accepted|agreed|acknowledged|confirmed|i confirm|we accept|we agree|accepted the change)\b/i;
 
             if (!ACK_RE.test(recentText)) {
                 result.status = "Review Required";
@@ -497,10 +497,10 @@ async function classifyTicket(text) {
      * no Fleet request means
      * no automatic confirmation
      */
-if (
-    result.status === "Confirmed" &&
-    result.fleet_request_found === false
-) {
+ if (
+     result.status === "Confirmed" &&
+     result.fleet_request_found === false
+ ) {
 
         result.status =
             "Review Required";
