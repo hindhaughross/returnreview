@@ -18,7 +18,7 @@ INSTRUCTIONS:
 - Output only the JSON matching the schema below.
 
 IMPORTANT EXCEPTION (LEX AUTOLEASE):
-- Special-case: Emails from northumbria@lexautolease.co.uk (Lex Autolease) that state phrases such as "I can confirm I have requested the collection" and include a collection date should be treated as a valid confirmation when they follow a fleet booking email. In these cases, if fleet_request_found=true and a lease company date is provided, set status="Confirmed", confidence=100, review_required=false, and category="Lease Company Confirmation" (unless an explicit later failure message appears). This exception overrides the default date-mismatch review rule.
+- Special-case: Emails from northumbria@lexautolease.co.uk (Lex Autolease) that state phrases such as "I can confirm I have requested the collection" and include a collection date should be treated as a valid confirmation when they follow a fleet booking email, BUT ONLY when the lease company date matches the fleet booked date (after normalization). In these cases, if fleet_request_found=true and normalized lease_company_date equals normalized fleet_booked_date, set status="Confirmed", confidence=100, review_required=false, and category="Lease Company Confirmation" (unless an explicit later failure message appears). If the dates differ, do NOT auto-confirm: treat as Review Required per the standard date-mismatch rule.
 
 CRITICAL FINAL STATE RULE (APPLY BEFORE RETURNING JSON):
 - Determine the final state from the most recent substantive update in the chronology (not from the earliest confirmations).
