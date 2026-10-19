@@ -17,6 +17,9 @@ INSTRUCTIONS:
 - Summary: one short sentence (max 25 words) describing registration/date changes and final outcome.
 - Output only the JSON matching the schema below.
 
+IMPORTANT EXCEPTION (LEX AUTOLEASE):
+- Special-case: Emails from northumbria@lexautolease.co.uk (Lex Autolease) that state phrases such as "I can confirm I have requested the collection" and include a collection date should be treated as a valid confirmation when they follow a fleet booking email. In these cases, if fleet_request_found=true and a lease company date is provided, set status="Confirmed", confidence=100, review_required=false, and category="Lease Company Confirmation" (unless an explicit later failure message appears). This exception overrides the default date-mismatch review rule.
+
 CRITICAL FINAL STATE RULE (APPLY BEFORE RETURNING JSON):
 - Determine the final state from the most recent substantive update in the chronology (not from the earliest confirmations).
 - If any of the following failure indicators occur in the last substantive message(s), this is a terminal failure and you MUST return:
@@ -69,6 +72,24 @@ Assistant JSON:
   "review_required": false,
   "summary": "Collection for NL73 RUY has fallen through and failed.",
   "reason": "Final message indicates collection failed; awaiting cause and potential rebook."
+}
+
+EXAMPLE LEX - LEX AUTOLEASE CONFIRMS (SPECIAL CASE)
+Chronology:
+- Fleet: "Please collect on 23/10/2026"
+- Lease (northumbria@lexautolease.co.uk): "I can confirm I have requested the collection for your vehicle for [23.10.2026] ... You will receive a confirmation email when the collection has been successfully scheduled."
+Assistant JSON:
+{
+  "registration": "",
+  "fleet_request_found": true,
+  "category": "Lease Company Confirmation",
+  "status": "Confirmed",
+  "fleet_booked_date": "23/10/2026",
+  "lease_company_date": "23/10/2026",
+  "confidence": 100,
+  "review_required": false,
+  "summary": "Collection requested and treated as confirmed for 23/10/2026 by Lex Autolease.",
+  "reason": ""
 }
 
 EXAMPLE 1 - CONFIRMED
