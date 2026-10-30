@@ -2,6 +2,8 @@ var client = ZAFClient.init();
 
 const VIEW_ID = 6288185996831;
 const MAX_PARALLEL = 5;
+const SCROLL_KEY = "returnReviewAppScrollY";
+const TICKET_CACHE_KEY = "returnReviewTicketCacheV1";
 
 let analysedTickets = [];
 let confirmedTickets = [];
@@ -19,50 +21,111 @@ const KNOWN_LEASE_COMPANIES = [
     { name: "Sainsbury's Motor Finance", aliases: ["sainsbury's motor finance", "sainsburys motor finance", "sainsbury's"] }
 ];
 
-document.addEventListener("DOMContentLoaded", () => {
+function safeLocalStorageGet(key) {
+    try {
+        return window.localStorage.getItem(key);
+    } catch (err) {
+        return null;
+    }
+}
 
-    document
-        .getElementById("analyseBtn")
-        .addEventListener("click", analyseView);
+function safeLocalStorageSet(key, value) {
+    try {
+        window.localStorage.setItem(key, value);
+    } catch (err) {
+        console.warn("Local storage unavailable", err);
+    }
+}
 
-    document
-        .getElementById("stopBtn")
-        .addEventListener("click", () => {
-            stopRequested = true;
+function loadTicketCache() {
+    const raw = safeLocalStorageGet(TICKET_CACHE_KEY);
+
+    if (!raw) {
+        return {};
+    }
+
+    try {
+        return JSON.parse(raw);
+    } catch (err) {
+        console.warn("Unable to read cache", err);
+        return {};
+    }
+}
+
+function saveTicketCache(cache) {
+    safeLocalStorageSet(TICKET_CACHE_KEY, JSON.stringify(cache));
+}
+
+function buildTicketSnapshot(ticket, comments) {
+    const commentItems = (comments?.comments || []).map(comment => ({
+        id: comment.id,
+        created_at: comment.created_at,
+        body: (comment.body || "").replace(/\s+/g, " ").trim()
+    }));
+
+    return JSON.stringify({
+        id: ticket.id,
+        status: ticket.status,
+        updated_at: ticket.updated_at,
+        tags: (ticket.tags || []).slice().sort(),
+        custom_fields: (ticket.custom_fields || [])
+            .map(field => ({
+                id: field.id,
+                value: field.value
+            }))
+            .sort((a, b) => Number(a.id) - Number(b.id)),
+        comments: commentItems
+    });
+}
+
+function readCachedResult(ticket, comments) {
+    const cache = loadTicketCache();
+    const entry = cache[String(ticket.id)];
+
+    if (!entry) {
+        return null;
+    }
+
+    const snapshot = buildTicketSnapshot(ticket, comments);
+    if (entry.snapshot !== snapshot) {
+        return null;
+    }
+
+    return entry.result;
+}
+
+function writeCachedResult(ticket, comments, result) {
+    const cache = loadTicketCache();
+    cache[String(ticket.id)] = {
+        snapshot: buildTicketSnapshot(ticket, comments),
+        result,
+        scannedAt: Date.now()
+    };
+    saveTicketCache(cache);
+}
+
+function rememberScrollPosition() {
+    const y = window.scrollY || window.pageYOffset || document.documentElement.scrollTop || 0;
+    try {
+        sessionStorage.setItem(SCROLL_KEY, String(Math.round(y)));
+    } catch (err) {
+        console.warn("Unable to save scroll position", err);
+    }
+}
+
+function restoreScrollPosition() {
+    const savedY = Number(sessionStorage.getItem(SCROLL_KEY) || "0");
+    if (!Number.isFinite(savedY)) {
+        return;
+    }
+
+    requestAnimationFrame(() => {
+        window.scrollTo({
+            top: savedY,
+            behavior: "auto"
         });
-
-    document
-        .getElementById("closeSelectedBtn")
-        .addEventListener("click", closeSelected);
-
-    document
-        .getElementById("closeAllBtn")
-        .addEventListener("click", closeAllConfirmed);
-
-    const exportBtn =
-        document.getElementById("exportBtn");
-
-    if (exportBtn) {
-        exportBtn.addEventListener(
-            "click",
-            exportCSV
-        );
-    }
-
-    const showAllBtn =
-        document.getElementById(
-            "showAllBtn"
-        );
-
-    if (showAllBtn) {
-        showAllBtn.addEventListener(
-            "click",
-            showAllTickets
-        );
-    }
-
-    initialiseFilters();
-});
+    });
+}
 
 function getKnownLeaseCompanyNameFromText(text) {
     if (!text) return "";
@@ -114,6 +177,56 @@ function extractLeaseCompanyName(text, ticket = {}) {
 
     return "";
 }
+
+document.addEventListener("DOMContentLoaded", () => {
+    restoreScrollPosition();
+
+    window.addEventListener("scroll", rememberScrollPosition, { passive: true });
+    window.addEventListener("beforeunload", rememberScrollPosition);
+    window.addEventListener("pagehide", rememberScrollPosition);
+
+    document
+        .getElementById("analyseBtn")
+        .addEventListener("click", analyseView);
+
+    document
+        .getElementById("stopBtn")
+        .addEventListener("click", () => {
+            stopRequested = true;
+        });
+
+    document
+        .getElementById("closeSelectedBtn")
+        .addEventListener("click", closeSelected);
+
+    document
+        .getElementById("closeAllBtn")
+        .addEventListener("click", closeAllConfirmed);
+
+    const exportBtn =
+        document.getElementById("exportBtn");
+
+    if (exportBtn) {
+        exportBtn.addEventListener(
+            "click",
+            exportCSV
+        );
+    }
+
+    const showAllBtn =
+        document.getElementById(
+            "showAllBtn"
+        );
+
+    if (showAllBtn) {
+        showAllBtn.addEventListener(
+            "click",
+            showAllTickets
+        );
+    }
+
+    initialiseFilters();
+});
 
 async function analyseView() {
 
@@ -223,13 +336,16 @@ async function analyseView() {
                                     )
                                     .join("\n\n");
 
-                            const result =
-                                await classifyTicket(
-                                    conversation,
-                                    ticket
-                                );
+                            const cachedResult = readCachedResult(ticket, comments);
+                            let result;
 
-                            // Background: normalize and persist date fields to ticket custom fields
+                            if (cachedResult) {
+                                result = cachedResult;
+                            } else {
+                                result = await classifyTicket(conversation, ticket);
+                                writeCachedResult(ticket, comments, result);
+                            }
+
                             try {
                                 const normalizedLeaseDate = formatUkDate(result.lease_company_date || "");
 
@@ -468,12 +584,10 @@ async function classifyTicket(text, ticket = {}) {
         result.lease_company_name = inferredLeaseCompanyName;
     }
 
-    // ———————— Deterministic recency checks ————————
     try {
-        const recentWindow = 2000; // characters from the end of the conversation to prioritise
+        const recentWindow = 2000;
         const recentText = text ? text.slice(-recentWindow).toLowerCase() : "";
 
-        // Failure phrases which should force a terminal Failed Booking
         const FAILURE_RE = /(fallen through|has fallen through|collection fell through|collection has fallen through|collection failed|failed to collect|booking aborted|booking cancelled|cancelled collect|abortive|arranged collection later)/i;
 
         if (FAILURE_RE.test(recentText) || FAILURE_RE.test(text)) {
@@ -506,7 +620,6 @@ async function classifyTicket(text, ticket = {}) {
     } catch (err) {
         console.warn("Deterministic recency checks failed", err);
     }
-    // ———————— End deterministic checks ————————
 
     const hasReturnNotify = /RETURN_NOTIFY_LEASECO/i.test(text);
 
@@ -670,12 +783,6 @@ function renderTicket(ticket, result) {
     card.dataset.status =
         status;
 
-    console.log(
-        "Ticket Status:",
-        ticket.id,
-        status
-    );
-
     card.innerHTML = `
         <div class="ticketHeader">
 
@@ -746,7 +853,7 @@ function renderTicket(ticket, result) {
                 </div>
             </div>
 
-            <div class="ticketField">
+            <div class="ticketField leaseCompanyField">
                 <div class="ticketFieldLabel">
                     Lease Company
                 </div>
@@ -779,10 +886,7 @@ function renderTicket(ticket, result) {
         "click",
         async () => {
 
-            console.log(
-                "Opening ticket",
-                ticket.id
-            );
+            rememberScrollPosition();
 
             try {
 
