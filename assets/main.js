@@ -1,21 +1,114 @@
+var client = ZAFClient.init();
+
+const VIEW_ID = 6288185996831;
+const MAX_PARALLEL = 5;
+const SCROLL_STATE_KEY = "returnReviewScrollPos";
+
 const LEASE_COMPANY_LOOKUP = [
-    { name: "ALD Automotive Limited", aliases: ["ald automotive", "ald automotive limited", "ald"], tags: ["ald"] },
-    { name: "ALPHABET (UK) FLEET MANAGEMENT LTD", aliases: ["alphabet", "alphabet uk", "alphabet fleet management", "alphabet (uk) fleet management ltd"], tags: ["alphabet"] },
-    { name: "ARNOLD CLARK FINANCE LTD", aliases: ["arnold clark finance", "arnold clark", "acvm"], tags: ["acvm"] },
-    { name: "Arval Uk Ltd", aliases: ["arval", "arval uk", "arval uk ltd"], tags: ["arval"] },
-    { name: "Athlon", aliases: ["athlon"], tags: ["athlon"] },
-    { name: "Kinto", aliases: ["kinto", "kinto uk", "kinto gca helpdesk", "driver support executive, kinto"], tags: ["kinto"] },
-    { name: "Ayvens", aliases: ["ayvens", "ayvens uk"], tags: ["ayvens"] },
-    { name: "Lex Autolease", aliases: ["lex autolease", "lex", "lexautolease"], tags: ["lex"] },
-    { name: "Lookers Leasing", aliases: ["lookers leasing", "lookers"], tags: ["lookers_leasing"] },
-    { name: "Novuna Vehicle Solutions", aliases: ["novuna vehicle solutions", "novuna"], tags: ["novuna"] },
-    { name: "Sinclair", aliases: ["sinclair"], tags: ["sinclair"] },
-    { name: "TCH Leasing", aliases: ["tch leasing", "tch"], tags: ["tch"] },
-    { name: "VOLKSWAGEN GROUP UNITED KINGDOM LTD", aliases: ["volkswagen group united kingdom ltd", "vwfs", "vwfs1", "vw fleet solutions", "vw fleet"], tags: ["vwfs1"] }
+    {
+        name: "ALD Automotive Limited",
+        aliases: ["ald automotive limited", "ald automotive", "ald"],
+        tags: ["ald"]
+    },
+    {
+        name: "ALPHABET (UK) FLEET MANAGEMENT LTD",
+        aliases: ["alphabet (uk) fleet management ltd", "alphabet uk fleet management ltd", "alphabet", "alphabet fleet management"],
+        tags: ["alphabet"]
+    },
+    {
+        name: "ARNOLD CLARK FINANCE LTD",
+        aliases: ["arnold clark finance ltd", "arnold clark finance", "arnold clark", "acvm"],
+        tags: ["acvm"]
+    },
+    {
+        name: "Arval Uk Ltd",
+        aliases: ["arval uk ltd", "arval uk", "arval"],
+        tags: ["arval"]
+    },
+    {
+        name: "Athlon",
+        aliases: ["athlon"],
+        tags: ["athlon"]
+    },
+    {
+        name: "Kinto",
+        aliases: ["kinto", "kinto uk", "kinto gca helpdesk", "driver support executive, kinto", "driver support executive kinto"],
+        tags: ["kinto"]
+    },
+    {
+        name: "Ayvens",
+        aliases: ["ayvens", "ayvens uk"],
+        tags: ["ayvens"]
+    },
+    {
+        name: "Lex Autolease",
+        aliases: ["lex autolease", "lex", "lexautolease"],
+        tags: ["lex"]
+    },
+    {
+        name: "Lookers Leasing",
+        aliases: ["lookers leasing", "lookers"],
+        tags: ["lookers_leasing"]
+    },
+    {
+        name: "Novuna Vehicle Solutions",
+        aliases: ["novuna vehicle solutions", "novuna"],
+        tags: ["novuna"]
+    },
+    {
+        name: "Sinclair",
+        aliases: ["sinclair"],
+        tags: ["sinclair"]
+    },
+    {
+        name: "TCH Leasing",
+        aliases: ["tch leasing", "tch"],
+        tags: ["tch"]
+    },
+    {
+        name: "VOLKSWAGEN GROUP UNITED KINGDOM LTD",
+        aliases: ["volkswagen group united kingdom ltd", "vwfs", "vwfs1", "vw group fleet solutions", "volkswagen fleet"],
+        tags: ["vwfs1"]
+    }
 ];
 
-function normaliseLeaseCompanyText(value) {
-    if (!value) return "";
+let analysedTickets = [];
+let confirmedTickets = [];
+let stopRequested = false;
+
+function saveScrollState() {
+    try {
+        const value = String(window.scrollY || document.documentElement.scrollTop || 0);
+        sessionStorage.setItem(SCROLL_STATE_KEY, value);
+    } catch (err) {
+        console.warn("Could not save scroll state", err);
+    }
+}
+
+function restoreScrollState() {
+    try {
+        const saved = Number(sessionStorage.getItem(SCROLL_STATE_KEY) || "0");
+        if (!Number.isFinite(saved)) {
+            return;
+        }
+
+        requestAnimationFrame(() => {
+            window.scrollTo({
+                top: Math.max(saved, 0),
+                left: 0,
+                behavior: "auto"
+            });
+        });
+    } catch (err) {
+        console.warn("Could not restore scroll state", err);
+    }
+}
+
+function normalizeLeaseCompanyText(value) {
+    if (!value) {
+        return "";
+    }
+
     return String(value)
         .toLowerCase()
         .replace(/&/g, " and ")
@@ -24,201 +117,55 @@ function normaliseLeaseCompanyText(value) {
         .trim();
 }
 
-function matchKnownLeaseCompanyName(value) {
-    if (!value) return "";
+function detectLeaseCompanyName(conversationText, ticket, result) {
+    const candidateParts = [];
 
-    const normalized = normaliseLeaseCompanyText(value);
-    if (!normalized) return "";
+    if (conversationText) {
+        candidateParts.push(conversationText);
+    }
 
-    for (const company of LEASE_COMPANY_LOOKUP) {
-        const aliases = company.aliases.map(normaliseLeaseCompanyText);
-        const tags = company.tags.map(tag => normaliseLeaseCompanyText(tag));
-
-        const isMatch = aliases.some(alias => normalized.includes(alias) || alias.includes(normalized)) ||
-            tags.some(tag => normalized.includes(tag) || tag.includes(normalized));
-
-        if (isMatch) {
-            return company.name;
+    if (ticket) {
+        if (ticket.organization_name) candidateParts.push(ticket.organization_name);
+        if (ticket.organization && ticket.organization.name) candidateParts.push(ticket.organization.name);
+        if (ticket.tags && ticket.tags.length) candidateParts.push(ticket.tags.join(" "));
+        if (ticket.requester) {
+            if (ticket.requester.name) candidateParts.push(ticket.requester.name);
+            if (ticket.requester.email) candidateParts.push(ticket.requester.email);
         }
+        if (ticket.subject) candidateParts.push(ticket.subject);
+        if (ticket.description) candidateParts.push(ticket.description);
     }
 
-    return "";
-}
-
-function getTicketLeaseCompanyCandidate(ticket, text) {
-    const candidates = [];
-
-    if (ticket?.organization_name) candidates.push(ticket.organization_name);
-    if (ticket?.organization?.name) candidates.push(ticket.organization.name);
-    if (ticket?.organizationName) candidates.push(ticket.organizationName);
-    if (Array.isArray(ticket?.tags)) {
-        candidates.push(...ticket.tags);
+    if (result && result.lease_company_name) {
+        candidateParts.push(result.lease_company_name);
     }
 
-    if (text) {
-        const signatureMatches = [...text.matchAll(/(?:Regards|Kind regards|Best regards|Many thanks|Thanks)[\s\S]{0,200}(?:\n|<br\s*\/?>)([A-Za-z0-9&' .-]+)/gi)];
-        for (const match of signatureMatches) {
-            if (match[1]) candidates.push(match[1]);
-        }
-
-        const emailMatches = [...text.matchAll(/[A-Z0-9._%+-]+@([A-Za-z0-9.-]+\.[A-Za-z]{2,})/gi)];
-        for (const match of emailMatches) {
-            if (match[1]) candidates.push(match[1]);
-        }
+    const fullText = normalizeLeaseCompanyText(candidateParts.join(" "));
+    if (!fullText) {
+        return "";
     }
 
-    for (const candidate of candidates) {
-        const result = matchKnownLeaseCompanyName(candidate);
-        if (result) {
-            return result;
-        }
-    }
+    for (const entry of LEASE_COMPANY_LOOKUP) {
+        const aliases = [
+            entry.name,
+            ...(entry.aliases || []),
+            ...(entry.tags || [])
+        ].map(normalizeLeaseCompanyText);
 
-    return "";
-}
-
-function getLeaseCompanyDisplay(result, ticket) {
-    const direct = result?.lease_company_name;
-    const directMatch = direct ? matchKnownLeaseCompanyName(direct) : "";
-    if (directMatch) {
-        return directMatch;
-    }
-
-    const inferred = getTicketLeaseCompanyCandidate(ticket, ticket?.comment || "");
-    if (inferred) {
-        return inferred;
-    }
-
-    return "";
-}
-
-function rememberScrollPosition() {
-    const y = window.scrollY || window.pageYOffset || document.documentElement.scrollTop || 0;
-    try {
-        sessionStorage.setItem("returnReviewAppScrollY", String(Math.round(y)));
-    } catch (err) {
-        console.warn("Unable to save scroll position", err);
-    }
-}
-
-function restoreScrollPosition() {
-    try {
-        const savedY = Number(sessionStorage.getItem("returnReviewAppScrollY") || "0");
-        if (!Number.isFinite(savedY)) return;
-
-        requestAnimationFrame(() => {
-            window.scrollTo({
-                top: savedY,
-                behavior: "auto"
-            });
+        const matched = aliases.some(alias => {
+            if (!alias) return false;
+            return fullText.includes(alias);
         });
-    } catch (err) {
-        console.warn("Unable to restore scroll position", err);
+
+        if (matched) {
+            return entry.name;
+        }
     }
-}
 
-const originalClassifyTicket = typeof classifyTicket === "function" ? classifyTicket : null;
-
-if (originalClassifyTicket) {
-    // no-op placeholder to preserve existing function lifecycle; actual logic remains below
-}
-
-var client = ZAFClient.init();
-
-const VIEW_ID = 6288185996831;
-const MAX_PARALLEL = 5;
-const SCROLL_KEY = "returnReviewAppScrollY";
-const TICKET_CACHE_KEY = "returnReviewTicketCacheV1";
-
-let analysedTickets = [];
-let confirmedTickets = [];
-let stopRequested = false;
-
-function safeLocalStorageGet(key) {
-    try {
-        return window.localStorage.getItem(key);
-    } catch (err) {
-        return null;
-    }
-}
-
-function safeLocalStorageSet(key, value) {
-    try {
-        window.localStorage.setItem(key, value);
-    } catch (err) {
-        console.warn("Local storage unavailable", err);
-    }
-}
-
-function loadTicketCache() {
-    const raw = safeLocalStorageGet(TICKET_CACHE_KEY);
-    if (!raw) return {};
-
-    try {
-        return JSON.parse(raw);
-    } catch (err) {
-        console.warn("Unable to read cache", err);
-        return {};
-    }
-}
-
-function saveTicketCache(cache) {
-    safeLocalStorageSet(TICKET_CACHE_KEY, JSON.stringify(cache));
-}
-
-function buildTicketSnapshot(ticket, comments) {
-    const commentItems = (comments?.comments || []).map(comment => ({
-        id: comment.id,
-        created_at: comment.created_at,
-        body: (comment.body || "").replace(/\s+/g, " ").trim()
-    }));
-
-    return JSON.stringify({
-        id: ticket.id,
-        status: ticket.status,
-        updated_at: ticket.updated_at,
-        tags: (ticket.tags || []).slice().sort(),
-        custom_fields: (ticket.custom_fields || [])
-            .map(field => ({
-                id: field.id,
-                value: field.value
-            }))
-            .sort((a, b) => Number(a.id) - Number(b.id)),
-        comments: commentItems
-    });
-}
-
-function readCachedResult(ticket, comments) {
-    const cache = loadTicketCache();
-    const entry = cache[String(ticket.id)];
-    if (!entry) return null;
-
-    const snapshot = buildTicketSnapshot(ticket, comments);
-    if (entry.snapshot !== snapshot) return null;
-
-    return entry.result;
-}
-
-function writeCachedResult(ticket, comments, result) {
-    const cache = loadTicketCache();
-    cache[String(ticket.id)] = {
-        snapshot: buildTicketSnapshot(ticket, comments),
-        result,
-        scannedAt: Date.now()
-    };
-    saveTicketCache(cache);
+    return "";
 }
 
 document.addEventListener("DOMContentLoaded", () => {
-    restoreScrollPosition();
-    window.addEventListener("focus", restoreScrollPosition);
-    document.addEventListener("visibilitychange", () => {
-        if (!document.hidden) restoreScrollPosition();
-    });
-    window.addEventListener("scroll", rememberScrollPosition, { passive: true });
-    window.addEventListener("beforeunload", rememberScrollPosition);
-    window.addEventListener("pagehide", rememberScrollPosition);
-
     document
         .getElementById("analyseBtn")
         .addEventListener("click", analyseView);
@@ -251,9 +198,8 @@ document.addEventListener("DOMContentLoaded", () => {
 });
 
 async function analyseView() {
-
     try {
-
+        saveScrollState();
         stopRequested = false;
         resetDashboard();
 
@@ -309,15 +255,9 @@ async function analyseView() {
                         .map(c => c.body || "")
                         .join("\n\n");
 
-                    const cachedResult = readCachedResult(ticket, comments);
-                    let result;
+                    const result = await classifyTicket(conversation);
 
-                    if (cachedResult) {
-                        result = cachedResult;
-                    } else {
-                        result = await classifyTicket(conversation, ticket);
-                        writeCachedResult(ticket, comments, result);
-                    }
+                    result.lease_company_name = detectLeaseCompanyName(conversation, ticket, result);
 
                     try {
                         const normalizedLeaseDate = formatUkDate(result.lease_company_date || "");
@@ -341,7 +281,6 @@ async function analyseView() {
 
                     analysedTickets.push({ ticket, result });
                     renderTicket(ticket, result);
-
                 } catch (err) {
                     console.error("Ticket error", ticket.id, err);
                 } finally {
@@ -356,6 +295,7 @@ async function analyseView() {
             updateProgress(100, `Analysis complete (${processed} tickets)`);
         }
 
+        restoreScrollState();
     } catch (err) {
         console.error(err);
         alert("Error analysing tickets. Check browser console.");
@@ -371,7 +311,7 @@ function initialiseFilters() {
             card.classList.add("active");
 
             document.querySelectorAll(".ticketCard").forEach(ticket => {
-                ticket.style.display = ticket.dataset.status === filter ? "" : "none";
+                ticket.style.display = (ticket.dataset.status === filter) ? "" : "none";
             });
         });
     });
@@ -395,7 +335,7 @@ function resetDashboard() {
     updateProgress(0, "Ready");
 }
 
-async function classifyTicket(text, ticket = {}) {
+async function classifyTicket(text) {
     const response = await fetch(AI_CONFIG.ENDPOINT, {
         method: "POST",
         headers: {
@@ -404,8 +344,14 @@ async function classifyTicket(text, ticket = {}) {
         },
         body: JSON.stringify({
             messages: [
-                { role: "system", content: AI_PROMPT },
-                { role: "user", content: text }
+                {
+                    role: "system",
+                    content: AI_PROMPT
+                },
+                {
+                    role: "user",
+                    content: text
+                }
             ],
             temperature: 0,
             max_tokens: 1000
@@ -423,30 +369,24 @@ async function classifyTicket(text, ticket = {}) {
         throw new Error("No AI response returned");
     }
 
-    const content = data.choices[0].message.content
+    let content = data.choices[0].message.content
         .replace(/```json/gi, "")
         .replace(/```/g, "")
         .trim();
 
     const result = JSON.parse(content);
 
-    const inferredLeaseCompanyName = getTicketLeaseCompanyCandidate(ticket, text);
-    if (inferredLeaseCompanyName) {
-        result.lease_company_name = inferredLeaseCompanyName;
-    }
-
     try {
         const recentWindow = 2000;
         const recentText = text ? text.slice(-recentWindow).toLowerCase() : "";
+
         const FAILURE_RE = /(fallen through|has fallen through|collection fell through|collection has fallen through|collection failed|failed to collect|booking aborted|booking cancelled|cancelled collect|abortive|arranged collection later)/i;
 
         if (FAILURE_RE.test(recentText) || FAILURE_RE.test(text)) {
             result.status = "Failed Booking";
             result.confidence = 0;
             result.review_required = false;
-            result.reason = result.reason
-                ? result.reason + "; Final message indicates collection failed"
-                : "Final message indicates collection failed";
+            result.reason = result.reason ? result.reason + "; Final message indicates collection failed" : "Final message indicates collection failed";
             return result;
         }
 
@@ -454,16 +394,14 @@ async function classifyTicket(text, ticket = {}) {
         const leaseDate = (result.lease_company_date || "").trim();
 
         if (fleetDate && leaseDate && fleetDate !== leaseDate) {
-            const ACK_RE = /\b(accepted|agreed|acknowledged|confirmed|i confirm|we accept|we agree|accepted the change|has been amended to|amended to|has been updated to|updated to|changed to|set for|booked in for)\b/i;
+            const ACK_RE = /\b(accepted|agreed|acknowledged|confirmed|i confirm|we accept|we agree|accepted the change|has been amended to|amended to|has been updated to|updated to|changed to|set to|rebooked|re-booked)\b/i;
 
             if (!ACK_RE.test(recentText)) {
                 result.status = "Review Required";
                 result.confidence = 70;
                 result.review_required = true;
                 result.category = result.category || "Lease Company Date Change";
-                result.reason = result.reason
-                    ? result.reason + "; Lease date differs from fleet date and no fleet acknowledgement found"
-                    : "Lease date differs from fleet date and no fleet acknowledgement found";
+                result.reason = result.reason ? result.reason + "; Lease date differs from fleet date and no fleet acknowledgement found" : "Lease date differs from fleet date and no fleet acknowledgement found";
             }
         }
     } catch (err) {
@@ -493,18 +431,11 @@ async function classifyTicket(text, ticket = {}) {
         }
 
         const note = "NHS FLEET BOOKING not present in the email.";
-        if (baseSummary.endsWith(".") || baseSummary.endsWith("!")) {
-            result.summary = `${baseSummary} ${note}`;
-        } else {
-            result.summary = `${baseSummary}. ${note}`;
-        }
-
+        result.summary = (baseSummary.endsWith(".") || baseSummary.endsWith("!")) ? `${baseSummary} ${note}` : `${baseSummary}. ${note}`;
         result.status = "Review Required";
         result.review_required = true;
         result.confidence = 70;
-        result.reason = result.reason
-            ? result.reason + "; Missing RETURN_NOTIFY_LEASECO — requires human review"
-            : "Missing RETURN_NOTIFY_LEASECO — requires human review";
+        result.reason = result.reason ? result.reason + "; Missing RETURN_NOTIFY_LEASECO — requires human review" : "Missing RETURN_NOTIFY_LEASECO — requires human review";
     }
 
     if (result.status === "Confirmed" && result.fleet_request_found === false) {
@@ -550,16 +481,17 @@ function renderTicket(ticket, result) {
             cardClass = "confirmedCard";
             badgeClass = "statusConfirmed";
             confirmedTickets.push(ticket.id);
-            ticket.analysisResult = result;
             break;
         case "Failed Booking":
             cardClass = "failedCard";
             badgeClass = "statusFailed";
             break;
+        default:
+            break;
     }
 
     const evidenceHtml = result.summary || result.reason || "No summary returned";
-    const companyName = getLeaseCompanyDisplay(result, ticket);
+    const leaseCompanyName = (result.lease_company_name || "").trim();
 
     const card = document.createElement("div");
     card.className = `ticketCard ${cardClass}`;
@@ -577,7 +509,7 @@ function renderTicket(ticket, result) {
         <div class="ticketGrid">
             <div class="ticketField">
                 <div class="ticketFieldLabel">Registration</div>
-                <div class="ticketFieldValue">${result.registration || "-"}</div>
+                <div class="ticketFieldValue">${result.registration || ""}</div>
             </div>
 
             <div class="ticketField">
@@ -587,18 +519,20 @@ function renderTicket(ticket, result) {
 
             <div class="ticketField">
                 <div class="ticketFieldLabel">Fleet Date</div>
-                <div class="ticketFieldValue">${result.fleet_booked_date || "-"}</div>
+                <div class="ticketFieldValue">${result.fleet_booked_date || ""}</div>
             </div>
 
             <div class="ticketField">
                 <div class="ticketFieldLabel">Lease Date</div>
-                <div class="ticketFieldValue">${result.lease_company_date || "-"}</div>
+                <div class="ticketFieldValue">${result.lease_company_date || ""}</div>
             </div>
 
-            <div class="ticketField leaseCompanyField">
+            <div class="ticketField ticketFieldWide">
                 <div class="ticketFieldLabel">Lease Company</div>
-                <div class="ticketFieldValue">${companyName}</div>
+                <div class="ticketFieldValue ${leaseCompanyName ? "" : "blankField"}">${leaseCompanyName || ""}</div>
             </div>
+
+            <div class="ticketField ticketFieldWide placeholderField" aria-hidden="true"></div>
         </div>
 
         <div class="evidenceBox">
@@ -611,10 +545,7 @@ function renderTicket(ticket, result) {
 
     const ticketLink = card.querySelector(".ticketNumber");
     ticketLink.style.cursor = "pointer";
-
     ticketLink.addEventListener("click", async () => {
-        rememberScrollPosition();
-
         try {
             await client.invoke("routeTo", "ticket", ticket.id);
         } catch (err) {
@@ -648,12 +579,15 @@ function increment(id) {
 }
 
 function updateProgress(percent, text) {
-    document.getElementById("progressFill").style.width = `${percent}%`;
-    document.getElementById("progressText").innerText = text;
+    const fill = document.getElementById("progressFill");
+    const label = document.getElementById("progressText");
+    if (fill) fill.style.width = `${percent}%`;
+    if (label) label.innerText = text;
 }
 
 function updateResultsCount(text) {
-    document.getElementById("resultsCount").innerText = text;
+    const el = document.getElementById("resultsCount");
+    if (el) el.innerText = text;
 }
 
 async function closeSelected() {
@@ -673,32 +607,48 @@ async function closeAllConfirmed() {
 }
 
 function formatUkDate(dateString) {
-    if (!dateString) return "";
-    if (/^\d{2}\/\d{2}\/\d{4}$/.test(dateString)) return dateString;
+    if (!dateString) {
+        return "";
+    }
+
+    if (/^\d{2}\/\d{2}\/\d{4}$/.test(dateString)) {
+        return dateString;
+    }
 
     const date = new Date(dateString);
-    if (isNaN(date)) return dateString;
+    if (isNaN(date)) {
+        return dateString;
+    }
+
     return date.toLocaleDateString("en-GB");
 }
 
 function getCategoryValue(result) {
-    if (!result) return "lease_company_confirmation";
+    if (!result) {
+        return "lease_company_confirmation";
+    }
 
     const category = result.category || "Lease Company Confirmation";
 
     switch (category) {
-        case "Customer Amendments": return "customer_ammendments";
-        case "Customer Cancelation": return "customer_cancelation";
-        case "Aborted Collection": return "aborted_collection";
-        case "Lease Company Date Change": return "lease_company_date_change";
+        case "Customer Amendments":
+            return "customer_ammendments";
+        case "Customer Cancelation":
+            return "customer_cancelation";
+        case "Aborted Collection":
+            return "aborted_collection";
+        case "Lease Company Date Change":
+            return "lease_company_date_change";
         case "Lease Company Confirmation":
-        default: return "lease_company_confirmation";
+        default:
+            return "lease_company_confirmation";
     }
 }
 
 async function solveTicket(ticketId) {
     try {
         const analysed = analysedTickets.find(t => String(t.ticket.id) === String(ticketId));
+
         if (!analysed) {
             console.error("Analysis not found", ticketId);
             return;
@@ -758,54 +708,38 @@ async function solveTicket(ticketId) {
                         body: internalNote,
                         public: false
                     },
-                    additional_tags: ["collection_app_closed"],
                     custom_fields: customFields
                 }
             })
         });
 
         analysed.closed = true;
-        confirmedTickets = confirmedTickets.filter(id => String(id) !== String(ticketId));
-
-        const confirmedCount = document.getElementById("confirmedCount");
-        if (confirmedCount) {
-            confirmedCount.innerText = Math.max(0, parseInt(confirmedCount.innerText, 10) - 1);
-        }
-
-        const card = document.querySelector(`.ticketCheckbox[value="${ticketId}"]`)?.closest(".ticketCard");
-        if (card) card.remove();
-
-        updateResultsCount(`${document.querySelectorAll(".ticketCard").length} tickets remaining`);
-        console.log(`Ticket ${ticketId} closed successfully`);
     } catch (err) {
-        console.error("Unable to close ticket", ticketId, err);
+        console.error(`Failed to close ticket ${ticketId}`, err);
     }
 }
 
-function escapeCsvValue(value) {
-    const stringValue = String(value ?? "");
-    return `"${stringValue.replace(/"/g, '""')}"`;
-}
-
 function exportCSV() {
-    const rows = [];
-    rows.push(["Ticket", "Registration", "Status", "Confidence", "Lease Company", "Summary"]);
+    const rows = [["Ticket ID", "Status", "Registration", "Fleet Date", "Lease Date", "Lease Company", "Summary"]];
 
-    analysedTickets.forEach(item => {
+    analysedTickets.forEach(({ ticket, result }) => {
         rows.push([
-            item.ticket.id,
-            item.result.registration || "",
-            item.result.status || "",
-            item.result.confidence || "",
-            getLeaseCompanyDisplay(item.result, item.ticket),
-            item.result.summary || item.result.reason || ""
+            ticket.id,
+            result.status || "Review Required",
+            result.registration || "",
+            result.fleet_booked_date || "",
+            result.lease_company_date || "",
+            result.lease_company_name || "",
+            (result.summary || result.reason || "").replace(/\r?\n/g, " ")
         ]);
     });
 
-    const csv = rows.map(row => row.map(escapeCsvValue).join(",")).join("\n");
+    const csv = rows.map(row => row.map(value => `"${String(value).replace(/"/g, '""')}"`).join(",")).join("\n");
     const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
-    const link = document.createElement("a");
-    link.href = URL.createObjectURL(blob);
-    link.download = "ticket-analysis.csv";
-    link.click();
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = "return-review-export.csv";
+    anchor.click();
+    URL.revokeObjectURL(url);
 }
