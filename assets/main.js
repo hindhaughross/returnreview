@@ -39,10 +39,7 @@ function safeLocalStorageSet(key, value) {
 
 function loadTicketCache() {
     const raw = safeLocalStorageGet(TICKET_CACHE_KEY);
-
-    if (!raw) {
-        return {};
-    }
+    if (!raw) return {};
 
     try {
         return JSON.parse(raw);
@@ -81,15 +78,10 @@ function buildTicketSnapshot(ticket, comments) {
 function readCachedResult(ticket, comments) {
     const cache = loadTicketCache();
     const entry = cache[String(ticket.id)];
-
-    if (!entry) {
-        return null;
-    }
+    if (!entry) return null;
 
     const snapshot = buildTicketSnapshot(ticket, comments);
-    if (entry.snapshot !== snapshot) {
-        return null;
-    }
+    if (entry.snapshot !== snapshot) return null;
 
     return entry.result;
 }
@@ -114,17 +106,16 @@ function rememberScrollPosition() {
 }
 
 function restoreScrollPosition() {
-    const savedY = Number(sessionStorage.getItem(SCROLL_KEY) || "0");
-    if (!Number.isFinite(savedY)) {
-        return;
-    }
+    try {
+        const savedY = Number(sessionStorage.getItem(SCROLL_KEY) || "0");
+        if (!Number.isFinite(savedY)) return;
 
-    requestAnimationFrame(() => {
-        window.scrollTo({
-            top: savedY,
-            behavior: "auto"
+        requestAnimationFrame(() => {
+            window.scrollTo({ top: savedY, behavior: "auto" });
         });
-    });
+    } catch (err) {
+        console.warn("Unable to restore scroll position", err);
+    }
 }
 
 function getKnownLeaseCompanyNameFromText(text) {
@@ -176,6 +167,20 @@ function extractLeaseCompanyName(text, ticket = {}) {
     }
 
     return "";
+}
+
+function getLeaseCompanyDisplay(result, ticket) {
+    const fromResult = result?.lease_company_name;
+    if (fromResult && fromResult.trim()) {
+        return fromResult.trim();
+    }
+
+    const fromTicket = ticket?.organization_name || ticket?.organization?.name || ticket?.organizationName;
+    if (fromTicket && fromTicket.trim()) {
+        return fromTicket.trim();
+    }
+
+    return "-";
 }
 
 document.addEventListener("DOMContentLoaded", () => {
@@ -584,10 +589,12 @@ async function classifyTicket(text, ticket = {}) {
         result.lease_company_name = inferredLeaseCompanyName;
     }
 
+    // ———————— Deterministic recency checks ————————
     try {
-        const recentWindow = 2000;
+        const recentWindow = 2000; // characters from the end of the conversation to prioritise
         const recentText = text ? text.slice(-recentWindow).toLowerCase() : "";
 
+        // Failure phrases which should force a terminal Failed Booking
         const FAILURE_RE = /(fallen through|has fallen through|collection fell through|collection has fallen through|collection failed|failed to collect|booking aborted|booking cancelled|cancelled collect|abortive|arranged collection later)/i;
 
         if (FAILURE_RE.test(recentText) || FAILURE_RE.test(text)) {
@@ -598,9 +605,11 @@ async function classifyTicket(text, ticket = {}) {
                 ? result.reason + "; Final message indicates collection failed"
                 : "Final message indicates collection failed";
 
+            // Return early for terminal failures to avoid accidental reclassification
             return result;
         }
 
+        // If lease date differs from fleet date and there's no fleet acknowledgement in recent messages, force review
         const fleetDate = (result.fleet_booked_date || "").trim();
         const leaseDate = (result.lease_company_date || "").trim();
 
@@ -615,15 +624,22 @@ async function classifyTicket(text, ticket = {}) {
                 result.reason = result.reason
                     ? result.reason + "; Lease date differs from fleet date and no fleet acknowledgement found"
                     : "Lease date differs from fleet date and no fleet acknowledgement found";
+                // do not return so further normalization can occur
             }
         }
     } catch (err) {
         console.warn("Deterministic recency checks failed", err);
     }
+    // ———————— End deterministic checks ————————
 
+    // Enforce presence of RETURN_NOTIFY_LEASECO but preserve AI summary:
+    // If AI returned "Confirmed" but the original chronology text does not
+    // contain RETURN_NOTIFY_LEASECO, force human review and append a
+    // standardized note to the model's summary.
     const hasReturnNotify = /RETURN_NOTIFY_LEASECO/i.test(text);
 
     if (result.status === "Confirmed" && !hasReturnNotify) {
+        // Preserve AI summary if available, otherwise build a minimal one
         const aiSummary = (result.summary || "").trim();
         const reg = (result.registration || "").replace(/\s+/g, " ").trim();
         const fleetDate = (result.fleet_booked_date || "").trim();
@@ -643,6 +659,7 @@ async function classifyTicket(text, ticket = {}) {
             }
         }
 
+        // Append the standardized note. Ensure punctuation/spacing is correct.
         const note = "NHS FLEET BOOKING not present in the email.";
         if (baseSummary.endsWith(".") || baseSummary.endsWith("!")) {
             result.summary = `${baseSummary} ${note}`;
@@ -650,6 +667,7 @@ async function classifyTicket(text, ticket = {}) {
             result.summary = `${baseSummary}. ${note}`;
         }
 
+        // Force review status and update metadata
         result.status = "Review Required";
         result.review_required = true;
         result.confidence = 70;
@@ -658,17 +676,32 @@ async function classifyTicket(text, ticket = {}) {
             : "Missing RETURN_NOTIFY_LEASECO — requires human review";
     }
 
+    /*
+     * Safety check:
+     * no Fleet request means
+     * no automatic confirmation
+     */
     if (
         result.status === "Confirmed" &&
         result.fleet_request_found === false
     ) {
 
-        result.status = "Review Required";
-        result.review_required = true;
-        result.confidence = 70;
-        result.reason = "Fleet request not found";
+        result.status =
+            "Review Required";
+
+        result.review_required =
+            true;
+
+        result.confidence =
+            70;
+
+        result.reason =
+            "Fleet request not found";
     }
 
+    /*
+     * Validate registration locally
+     */
     const reg =
         (result.registration || "")
             .replace(/\s+/g, "")
@@ -684,32 +717,29 @@ async function classifyTicket(text, ticket = {}) {
         validStandard ||
         validNI;
 
+    /*
+     * Force review for
+     * non-standard registrations
+     */
     if (
         result.registration &&
         !result.registration_valid
     ) {
 
-        result.status = "Review Required";
-        result.review_required = true;
-        result.confidence = 70;
-        result.reason = "Possible private registration detected";
+        result.status =
+            "Review Required";
+
+        result.review_required =
+            true;
+
+        result.confidence =
+            70;
+
+        result.reason =
+            "Possible private registration detected";
     }
 
     return result;
-}
-
-function getLeaseCompanyDisplay(result, ticket) {
-    const fromResult = result?.lease_company_name;
-    if (fromResult && fromResult.trim()) {
-        return fromResult.trim();
-    }
-
-    const fromTicket = ticket?.organization_name || ticket?.organization?.name || ticket?.organizationName;
-    if (fromTicket && fromTicket.trim()) {
-        return fromTicket.trim();
-    }
-
-    return "-";
 }
 
 function renderTicket(ticket, result) {
