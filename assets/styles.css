@@ -1,307 +1,249 @@
-body{
-    font-family:Segoe UI,sans-serif;
-    padding:12px;
-    margin:0;
-    background:#f5f7fa;
-    font-size:13px;
+body {
+    font-family: Segoe UI, sans-serif;
+    padding: 12px;
+    margin: 0;
+    background: #f5f7fa;
+    font-size: 13px;
 }
 
-.header{
-    margin-bottom:10px;
+.stickyPanel {
+    position: sticky;
+    top: 0;
+    z-index: 20;
+    background: rgba(245, 247, 250, 0.96);
+    backdrop-filter: blur(4px);
+    padding: 10px 0 6px 0;
+    border-bottom: 1px solid #dfe3e8;
+    margin: -12px -12px 12px -12px;
+    padding-left: 12px;
+    padding-right: 12px;
 }
 
-.header h1{
-    margin:0 0 5px 0;
-    font-size:24px;
+.header {
+    margin-bottom: 10px;
 }
 
-.viewName{
-    color:#666;
-    margin-bottom:10px;
+.header h1 {
+    margin: 0 0 5px 0;
+    font-size: 24px;
 }
 
-.controls{
-    display:flex;
-    gap:8px;
-    margin-bottom:10px;
+.viewName {
+    color: #666;
+    margin-bottom: 10px;
 }
 
-button{
-    cursor:pointer;
-    padding:8px 12px;
-    border:none;
-    border-radius:6px;
-    color:white;
-    font-weight:600;
-
-    transition:
-        transform .15s ease,
-        box-shadow .15s ease,
-        opacity .15s ease,
-        background-color .15s ease;
-
-    box-shadow:
-        0 2px 4px rgba(0,0,0,.12);
+.controls {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 10px;
+    flex-wrap: wrap;
 }
 
-button:hover{
-
-    transform:
-        translateY(-1px);
-
-    box-shadow:
-        0 4px 10px rgba(0,0,0,.15);
+button {
+    cursor: pointer;
+    padding: 8px 12px;
+    border: none;
+    border-radius: 6px;
+    color: white;
+    font-weight: 600;
+    transition: transform .15s ease, box-shadow .15s ease, opacity .15s ease, background-color .15s ease;
+    box-shadow: 0 2px 4px rgba(0,0,0,.12);
 }
 
-button:active{
-
-    transform:
-        scale(.96);
-
-    box-shadow:
-        inset 0 2px 4px rgba(0,0,0,.25);
+button:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 10px rgba(0,0,0,.15);
 }
 
-#analyseBtn{
-    background:#0066cc;
+button:active {
+    transform: scale(.96);
+    box-shadow: inset 0 2px 4px rgba(0,0,0,.25);
 }
 
-#stopBtn{
-    background:#5f6368;
+#analyseBtn { background: #0066cc; }
+#stopBtn { background: #5f6368; }
+#exportBtn { background: #0066cc; }
+#showAllBtn { background: #0066cc; }
+#closeSelectedBtn { background: #0f9d58; }
+#closeAllBtn { background: #d93025; }
+
+.progressWrapper {
+    margin-bottom: 12px;
 }
 
-#exportBtn{
-    background:#0066cc;
+.progressBar {
+    height: 12px;
+    background: #ddd;
+    border-radius: 20px;
+    overflow: hidden;
 }
 
-#showAllBtn{
-    background:#0066cc;
+#progressFill {
+    height: 100%;
+    width: 0%;
+    background: #0f9d58;
+    transition: width .3s ease;
 }
 
-#closeSelectedBtn{
-    background:#0f9d58;
+.summary {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 12px;
 }
 
-#closeAllBtn{
-    background:#d93025;
+.card {
+    flex: 1;
+    padding: 12px;
+    border-radius: 8px;
+    text-align: center;
+    color: white;
+    cursor: pointer;
+    transition: transform .15s ease, box-shadow .15s ease;
 }
 
-.progressWrapper{
-    margin-bottom:12px;
+.card:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 10px rgba(0,0,0,.15);
 }
 
-.progressBar{
-    height:12px;
-    background:#ddd;
-    border-radius:20px;
-    overflow:hidden;
+.card.active {
+    box-shadow: 0 0 0 3px #0066cc;
 }
 
-#progressFill{
-    height:100%;
-    width:0%;
-    background:#0f9d58;
-    transition:
-        width .3s ease;
+.confirmed { background: #0f9d58; }
+.failed { background: #d93025; }
+.review { background: #5f6368; }
+
+.card h3 {
+    margin: 0;
+    font-size: 14px;
 }
 
-.summary{
-    display:flex;
-    gap:10px;
-    margin-bottom:12px;
+.card span {
+    display: block;
+    margin-top: 6px;
+    font-size: 22px;
+    font-weight: bold;
 }
 
-.card{
-    flex:1;
-    padding:12px;
-    border-radius:8px;
-    text-align:center;
-    color:white;
-    cursor:pointer;
-
-    transition:
-        transform .15s ease,
-        box-shadow .15s ease;
+.bulkActions {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 12px;
+    flex-wrap: wrap;
 }
 
-.card:hover{
-
-    transform:
-        translateY(-1px);
-
-    box-shadow:
-        0 4px 10px rgba(0,0,0,.15);
+#ticketContainer {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
 }
 
-.card.active{
-    box-shadow:0 0 0 3px #0066cc;
+.ticketCard {
+    background: white;
+    border-left: 4px solid #ccc;
+    border-radius: 6px;
+    padding: 10px;
+    box-shadow: 0 2px 6px rgba(0,0,0,.08);
+    transition: transform .15s ease, box-shadow .15s ease;
 }
 
-.confirmed{
-    background:#0f9d58;
+.ticketCard:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 10px rgba(0,0,0,.12);
 }
 
-.failed{
-    background:#d93025;
+.confirmedCard { border-left-color: #0f9d58; }
+.failedCard { border-left-color: #d93025; }
+.reviewCard { border-left-color: #5f6368; }
+
+.ticketHeader {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 8px;
 }
 
-.review{
-    background:#5f6368;
+.ticketNumber {
+    font-size: 14px;
+    font-weight: bold;
+    color: #0066cc;
+    cursor: pointer;
 }
 
-.card h3{
-    margin:0;
-    font-size:14px;
+.ticketNumber:hover { text-decoration: underline; }
+
+.ticketGrid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    margin-bottom: 8px;
 }
 
-.card span{
-    display:block;
-    margin-top:6px;
-    font-size:22px;
-    font-weight:bold;
+.ticketField {
+    background: #f8f9fa;
+    padding: 6px;
+    border-radius: 4px;
+    min-width: 0;
 }
 
-.bulkActions{
-    display:flex;
-    gap:8px;
-    margin-bottom:12px;
+.leaseCompanyField {
+    grid-column: 1 / -1;
 }
 
-#ticketContainer{
-    display:flex;
-    flex-direction:column;
-    gap:8px;
+.ticketFieldLabel {
+    font-size: 10px;
+    font-weight: bold;
+    color: #666;
+    text-transform: uppercase;
+    margin-bottom: 2px;
 }
 
-.ticketCard{
-    background:white;
-    border-left:4px solid #ccc;
-    border-radius:6px;
-    padding:10px;
-
-    box-shadow:
-        0 2px 6px rgba(0,0,0,.08);
-
-    transition:
-        transform .15s ease,
-        box-shadow .15s ease;
+.ticketFieldValue {
+    font-size: 12px;
+    word-break: break-word;
 }
 
-.ticketCard:hover{
-
-    transform:
-        translateY(-1px);
-
-    box-shadow:
-        0 4px 10px rgba(0,0,0,.12);
+.statusBadge {
+    padding: 3px 8px;
+    border-radius: 12px;
+    color: white;
+    font-size: 11px;
+    font-weight: bold;
 }
 
-.confirmedCard{
-    border-left-color:#0f9d58;
+.statusConfirmed { background: #0f9d58; }
+.statusFailed { background: #d93025; }
+.statusReview { background: #5f6368; }
+
+.evidenceBox {
+    background: #eef4ff;
+    border-left: 3px solid #0066cc;
+    padding: 6px;
+    border-radius: 4px;
+    font-size: 11px;
+    line-height: 1.3;
+    max-height: 72px;
+    overflow: auto;
 }
 
-.failedCard{
-    border-left-color:#d93025;
+.evidenceTitle {
+    font-weight: bold;
+    margin-bottom: 4px;
 }
 
-.reviewCard{
-    border-left-color:#5f6368;
+.ticketCheckbox {
+    width: 16px;
+    height: 16px;
 }
 
-.ticketHeader{
-    display:flex;
-    justify-content:space-between;
-    align-items:center;
-    margin-bottom:8px;
-}
-
-.ticketNumber{
-    font-size:14px;
-    font-weight:bold;
-    color:#0066cc;
-    cursor:pointer;
-}
-
-.ticketNumber:hover{
-    text-decoration:underline;
-}
-
-.ticketGrid{
-    display:grid;
-    grid-template-columns:
-        repeat(4, 1fr);
-
-    gap:8px;
-    margin-bottom:8px;
-}
-
-.ticketField{
-    background:#f8f9fa;
-    padding:6px;
-    border-radius:4px;
-}
-
-.ticketFieldLabel{
-    font-size:10px;
-    font-weight:bold;
-    color:#666;
-    text-transform:uppercase;
-}
-
-.ticketFieldValue{
-    font-size:12px;
-}
-
-.statusBadge{
-    padding:3px 8px;
-    border-radius:12px;
-    color:white;
-    font-size:11px;
-    font-weight:bold;
-}
-
-.statusConfirmed{
-    background:#0f9d58;
-}
-
-.statusFailed{
-    background:#d93025;
-}
-
-.statusReview{
-    background:#5f6368;
-}
-
-.evidenceBox{
-    background:#eef4ff;
-    border-left:3px solid #0066cc;
-    padding:6px;
-    border-radius:4px;
-    font-size:11px;
-    line-height:1.3;
-    max-height:60px;
-    overflow:auto;
-}
-
-.evidenceTitle{
-    font-weight:bold;
-    margin-bottom:4px;
-}
-
-.ticketCheckbox{
-    width:16px;
-    height:16px;
-}
-
-@media(max-width:900px){
-
-    .summary{
-        flex-direction:column;
+@media (max-width: 900px) {
+    .summary {
+        flex-direction: column;
     }
 
-    .ticketGrid{
-        grid-template-columns:
-            1fr 1fr;
+    .ticketGrid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
     }
 }
-``
