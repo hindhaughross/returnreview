@@ -7,6 +7,18 @@ let analysedTickets = [];
 let confirmedTickets = [];
 let stopRequested = false;
 
+const KNOWN_LEASE_COMPANIES = [
+    { name: "Lex Autolease", aliases: ["lex autolease", "lexautolease", "northumbria@lexautolease.co.uk"] },
+    { name: "VWFS", aliases: ["vwfs", "vw fleet", "vw fleet solutions"] },
+    { name: "Arval", aliases: ["arval", "arval uk", "arval uk ltd"] },
+    { name: "Alphabet", aliases: ["alphabet", "alphabet leasing"] },
+    { name: "Leasys", aliases: ["leasys", "leasys uk"] },
+    { name: "Hertz Lease", aliases: ["hertz lease", "hertz"] },
+    { name: "Ayvens", aliases: ["ayvens", "ayvens uk"] },
+    { name: "Novuna", aliases: ["novuna", "novuna vehicle solutions"] },
+    { name: "Sainsbury's Motor Finance", aliases: ["sainsbury's motor finance", "sainsburys motor finance", "sainsbury's"] }
+];
+
 document.addEventListener("DOMContentLoaded", () => {
 
     document
@@ -52,6 +64,57 @@ document.addEventListener("DOMContentLoaded", () => {
     initialiseFilters();
 });
 
+function getKnownLeaseCompanyNameFromText(text) {
+    if (!text) return "";
+
+    const lower = text.toLowerCase();
+
+    for (const company of KNOWN_LEASE_COMPANIES) {
+        if (company.aliases.some(alias => lower.includes(alias.toLowerCase()))) {
+            return company.name;
+        }
+    }
+
+    const signatureMatch = text.match(/(?:Regards|Kind regards|Best regards|Many thanks|Thanks)[\s\S]{0,250}(?:\n|<br\s*\/?>)([A-Za-z0-9&' .-]+(?:Ltd|Limited|PLC|LLP|Group|Leasing|Fleet|Services|Finance))/i);
+    if (signatureMatch && signatureMatch[1]) {
+        const candidate = signatureMatch[1].trim();
+        if (candidate.length > 2 && !/^(regards|kind regards|best regards|many thanks|thanks)$/i.test(candidate)) {
+            return candidate;
+        }
+    }
+
+    const emailMatch = text.match(/[A-Z0-9._%+-]+@([A-Za-z0-9.-]+\.[A-Za-z]{2,})/i);
+    if (emailMatch && emailMatch[1]) {
+        const domain = emailMatch[1].toLowerCase();
+        for (const company of KNOWN_LEASE_COMPANIES) {
+            if (company.aliases.some(alias => alias.toLowerCase().includes(domain) || domain.includes(alias.toLowerCase()))) {
+                return company.name;
+            }
+        }
+    }
+
+    return "";
+}
+
+function extractLeaseCompanyName(text, ticket = {}) {
+    const candidateFromTicket =
+        ticket.organization_name ||
+        ticket.organization?.name ||
+        ticket.organizationName ||
+        "";
+
+    if (candidateFromTicket && candidateFromTicket.trim().length) {
+        return candidateFromTicket.trim();
+    }
+
+    const knownInText = getKnownLeaseCompanyNameFromText(text || "");
+    if (knownInText) {
+        return knownInText;
+    }
+
+    return "";
+}
+
 async function analyseView() {
 
     try {
@@ -84,18 +147,18 @@ async function analyseView() {
                 );
             }
 
-if (response.next_page) {
+            if (response.next_page) {
 
-    nextUrl =
-        response.next_page.replace(
-            "https://fleetsolutions.zendesk.com",
-            ""
-        );
+                nextUrl =
+                    response.next_page.replace(
+                        "https://fleetsolutions.zendesk.com",
+                        ""
+                    );
 
-} else {
+            } else {
 
-    nextUrl = null;
-}
+                nextUrl = null;
+            }
         }
 
         tickets = tickets.filter(
@@ -162,15 +225,14 @@ if (response.next_page) {
 
                             const result =
                                 await classifyTicket(
-                                    conversation
+                                    conversation,
+                                    ticket
                                 );
 
                             // Background: normalize and persist date fields to ticket custom fields
                             try {
-                                // Use your existing date formatter
                                 const normalizedLeaseDate = formatUkDate(result.lease_company_date || "");
 
-                                // Only attempt an update if we have a normalized lease date
                                 if (normalizedLeaseDate) {
                                     await client.request({
                                         url: `/api/v2/tickets/${ticket.id}.json`,
@@ -178,7 +240,6 @@ if (response.next_page) {
                                         contentType: "application/json",
                                         data: JSON.stringify({
                                             ticket: {
-                                                // update only the lease date custom field to the normalized form
                                                 custom_fields: [
                                                     { id: 6288217950111, value: normalizedLeaseDate }
                                                 ]
@@ -187,7 +248,6 @@ if (response.next_page) {
                                     });
                                 }
                             } catch (err) {
-                                // Don't block analysis on update failures; log for diagnostics
                                 console.warn(`Background date update failed for ticket ${ticket.id}`, err);
                             }
 
@@ -338,7 +398,7 @@ function resetDashboard() {
     );
 }
 
-async function classifyTicket(text) {
+async function classifyTicket(text, ticket = {}) {
 
     const response =
         await fetch(
@@ -403,6 +463,11 @@ async function classifyTicket(text) {
     const result =
         JSON.parse(content);
 
+    const inferredLeaseCompanyName = extractLeaseCompanyName(text, ticket);
+    if (inferredLeaseCompanyName) {
+        result.lease_company_name = inferredLeaseCompanyName;
+    }
+
     // ———————— Deterministic recency checks ————————
     try {
         const recentWindow = 2000; // characters from the end of the conversation to prioritise
@@ -419,16 +484,14 @@ async function classifyTicket(text) {
                 ? result.reason + "; Final message indicates collection failed"
                 : "Final message indicates collection failed";
 
-            // Return early for terminal failures to avoid accidental reclassification
             return result;
         }
 
-        // If lease date differs from fleet date and there's no fleet acknowledgement in recent messages, force review
         const fleetDate = (result.fleet_booked_date || "").trim();
         const leaseDate = (result.lease_company_date || "").trim();
 
         if (fleetDate && leaseDate && fleetDate !== leaseDate) {
-            const ACK_RE = /\b(accepted|agreed|acknowledged|confirmed|i confirm|we accept|we agree|accepted the change|has been amended to|amended to|has been updated to|updated to|changed to|set to|is now scheduled for)\b/i;
+            const ACK_RE = /\b(accepted|agreed|acknowledged|confirmed|i confirm|we accept|we agree|accepted the change|has been amended to|amended to|has been updated to|updated to|changed to|set for|booked in for)\b/i;
 
             if (!ACK_RE.test(recentText)) {
                 result.status = "Review Required";
@@ -438,7 +501,6 @@ async function classifyTicket(text) {
                 result.reason = result.reason
                     ? result.reason + "; Lease date differs from fleet date and no fleet acknowledgement found"
                     : "Lease date differs from fleet date and no fleet acknowledgement found";
-                // do not return so further normalization can occur
             }
         }
     } catch (err) {
@@ -446,21 +508,14 @@ async function classifyTicket(text) {
     }
     // ———————— End deterministic checks ————————
 
-    // Enforce presence of RETURN_NOTIFY_LEASECO but preserve AI summary:
-    // If AI returned "Confirmed" but the original chronology text does not
-    // contain RETURN_NOTIFY_LEASECO, force human review and append a
-    // standardized note to the model's summary.
     const hasReturnNotify = /RETURN_NOTIFY_LEASECO/i.test(text);
 
     if (result.status === "Confirmed" && !hasReturnNotify) {
-        // Preserve AI summary if available, otherwise build a minimal one
         const aiSummary = (result.summary || "").trim();
         const reg = (result.registration || "").replace(/\s+/g, " ").trim();
         const fleetDate = (result.fleet_booked_date || "").trim();
         const fleetDateFormatted = formatUkDate(fleetDate);
         const fleetDateDisplay = fleetDateFormatted || fleetDate;
-        const leaseDate = (result.lease_company_date || "").trim();
-        const fleetDateText = fleetDateDisplay;
 
         let baseSummary = aiSummary;
         if (!baseSummary) {
@@ -475,7 +530,6 @@ async function classifyTicket(text) {
             }
         }
 
-        // Append the standardized note. Ensure punctuation/spacing is correct.
         const note = "NHS FLEET BOOKING not present in the email.";
         if (baseSummary.endsWith(".") || baseSummary.endsWith("!")) {
             result.summary = `${baseSummary} ${note}`;
@@ -483,7 +537,6 @@ async function classifyTicket(text) {
             result.summary = `${baseSummary}. ${note}`;
         }
 
-        // Force review status and update metadata
         result.status = "Review Required";
         result.review_required = true;
         result.confidence = 70;
@@ -492,32 +545,17 @@ async function classifyTicket(text) {
             : "Missing RETURN_NOTIFY_LEASECO — requires human review";
     }
 
-    /*
-     * Safety check:
-     * no Fleet request means
-     * no automatic confirmation
-     */
- if (
-     result.status === "Confirmed" &&
-     result.fleet_request_found === false
- ) {
+    if (
+        result.status === "Confirmed" &&
+        result.fleet_request_found === false
+    ) {
 
-        result.status =
-            "Review Required";
-
-        result.review_required =
-            true;
-
-        result.confidence =
-            70;
-
-        result.reason =
-            "Fleet request not found";
+        result.status = "Review Required";
+        result.review_required = true;
+        result.confidence = 70;
+        result.reason = "Fleet request not found";
     }
 
-    /*
-     * Validate registration locally
-     */
     const reg =
         (result.registration || "")
             .replace(/\s+/g, "")
@@ -533,29 +571,32 @@ async function classifyTicket(text) {
         validStandard ||
         validNI;
 
-    /*
-     * Force review for
-     * non-standard registrations
-     */
     if (
         result.registration &&
         !result.registration_valid
     ) {
 
-        result.status =
-            "Review Required";
-
-        result.review_required =
-            true;
-
-        result.confidence =
-            70;
-
-        result.reason =
-            "Possible private registration detected";
+        result.status = "Review Required";
+        result.review_required = true;
+        result.confidence = 70;
+        result.reason = "Possible private registration detected";
     }
 
     return result;
+}
+
+function getLeaseCompanyDisplay(result, ticket) {
+    const fromResult = result?.lease_company_name;
+    if (fromResult && fromResult.trim()) {
+        return fromResult.trim();
+    }
+
+    const fromTicket = ticket?.organization_name || ticket?.organization?.name || ticket?.organizationName;
+    if (fromTicket && fromTicket.trim()) {
+        return fromTicket.trim();
+    }
+
+    return "-";
 }
 
 function renderTicket(ticket, result) {
@@ -588,20 +629,20 @@ function renderTicket(ticket, result) {
 
     switch (status) {
 
-case "Confirmed":
-    cardClass =
-        "confirmedCard";
-    badgeClass =
-        "statusConfirmed";
+        case "Confirmed":
+            cardClass =
+                "confirmedCard";
+            badgeClass =
+                "statusConfirmed";
 
-    confirmedTickets.push(
-        ticket.id
-    );
+            confirmedTickets.push(
+                ticket.id
+            );
 
-    ticket.analysisResult =
-        result;
+            ticket.analysisResult =
+                result;
 
-    break;
+            break;
 
         case "Failed Booking":
             cardClass =
@@ -611,10 +652,12 @@ case "Confirmed":
             break;
     }
 
-const evidenceHtml =
-    result.summary ||
-    result.reason ||
-    "No summary returned";
+    const evidenceHtml =
+        result.summary ||
+        result.reason ||
+        "No summary returned";
+
+    const companyName = getLeaseCompanyDisplay(result, ticket);
 
     const card =
         document.createElement(
@@ -703,12 +746,21 @@ const evidenceHtml =
                 </div>
             </div>
 
+            <div class="ticketField">
+                <div class="ticketFieldLabel">
+                    Lease Company
+                </div>
+                <div class="ticketFieldValue">
+                    ${companyName}
+                </div>
+            </div>
+
         </div>
 
         <div class="evidenceBox">
-<div class="evidenceTitle">
-    Summary
-</div>
+            <div class="evidenceTitle">
+                Summary
+            </div>
             ${evidenceHtml}
         </div>
     `;
@@ -909,24 +961,24 @@ async function solveTicket(ticketId) {
                     String(ticketId)
             );
 
-if (!analysed) {
+        if (!analysed) {
 
-    console.error(
-        "Analysis not found",
-        ticketId
-    );
+            console.error(
+                "Analysis not found",
+                ticketId
+            );
 
-    return;
-}
+            return;
+        }
 
-if (analysed.closed) {
+        if (analysed.closed) {
 
-    console.log(
-        `Ticket ${ticketId} already closed`
-    );
+            console.log(
+                `Ticket ${ticketId} already closed`
+            );
 
-    return;
-}
+            return;
+        }
 
         const result =
             analysed.result;
@@ -947,95 +999,86 @@ if (analysed.closed) {
         let internalNote =
             "Ticket closed automatically by Collection App.";
 
-if (
-    result.category ===
-    "Lease Company Date Change"
-) {
+        if (
+            result.category ===
+            "Lease Company Date Change"
+        ) {
 
-    internalNote =
-        `Ticket closed: Fleet requested ${fleetDate} and the lease company confirmed an amended collection date of ${leaseDate}.`;
+            internalNote =
+                `Ticket closed: Fleet requested ${fleetDate} and the lease company confirmed an amended collection date of ${leaseDate}.`;
 
-}
-else if (
-    fleetDate &&
-    leaseDate
-) {
+        }
+        else if (
+            fleetDate &&
+            leaseDate
+        ) {
 
-    internalNote =
-        `Ticket closed: Fleet requested ${fleetDate} and collection was confirmed for the same date.`;
+            internalNote =
+                `Ticket closed: Fleet requested ${fleetDate} and collection was confirmed for the same date.`;
 
-}
-else if (
-    result.summary
-) {
+        }
+        else if (
+            result.summary
+        ) {
 
-    internalNote =
-        `Ticket closed: ${result.summary}`;
-}
+            internalNote =
+                `Ticket closed: ${result.summary}`;
+        }
 
-const customFields = [
+        const customFields = [
+            {
+                id: 6288766218399,
+                value: categoryValue
+            }
+        ];
 
-    {
-        id: 6288766218399,
-        value: categoryValue
-    }
+        const ticketData =
+            await client.request({
 
-];
+                url:
+                    `/api/v2/tickets/${ticketId}.json`,
 
-/*
- * Get existing registration field
- */
-const ticketData =
-    await client.request({
+                type: "GET"
 
-        url:
-            `/api/v2/tickets/${ticketId}.json`,
+            });
 
-        type: "GET"
+        const existingReg =
+            ticketData.ticket.custom_fields.find(
+                f =>
+                    Number(f.id) ===
+                    5980606556063
+            )?.value;
 
-    });
+        if (
+            !existingReg &&
+            result.registration &&
+            result.registration !== "-"
+        ) {
 
-const existingReg =
-    ticketData.ticket.custom_fields.find(
-        f =>
-            Number(f.id) ===
-            5980606556063
-    )?.value;
+            customFields.push({
 
-/*
- * Only populate registration
- * if field is blank
- */
-if (
-    !existingReg &&
-    result.registration &&
-    result.registration !== "-"
-){
+                id: 5980606556063,
 
-    customFields.push({
+                value:
+                    result.registration
+                        .replace(/\s+/g, " ")
+                        .trim()
 
-        id: 5980606556063,
+            });
 
-        value:
-            result.registration
-                .replace(/\s+/g, " ")
-                .trim()
+        }
 
-    });
+        if (leaseDate) {
 
-}
+            customFields.push({
 
-if (leaseDate) {
+                id: 6288217950111,
 
-    customFields.push({
+                value: leaseDate
 
-        id: 6288217950111,
+            });
 
-        value: leaseDate
-
-    });
-
-}
+        }
 
         await client.request({
 
@@ -1049,4 +1092,141 @@ if (leaseDate) {
 
             data: JSON.stringify({
 
-{
+                ticket: {
+
+                    status: "solved",
+
+                    comment: {
+
+                        body: internalNote,
+
+                        public: false
+                    },
+
+                    additional_tags: [
+                        "collection_app_closed"
+                    ],
+
+                    custom_fields:
+                        customFields
+                }
+
+            })
+
+        });
+
+        analysed.closed = true;
+
+        confirmedTickets =
+            confirmedTickets.filter(
+                id =>
+                    String(id) !==
+                    String(ticketId)
+            );
+
+        const confirmedCount =
+            document.getElementById(
+                "confirmedCount"
+            );
+
+        if (confirmedCount) {
+
+            confirmedCount.innerText =
+                Math.max(
+                    0,
+                    parseInt(
+                        confirmedCount.innerText,
+                        10
+                    ) - 1
+                );
+        }
+
+        const card =
+            document
+                .querySelector(
+                    `.ticketCheckbox[value="${ticketId}"]`
+                )
+                ?.closest(
+                    ".ticketCard"
+                );
+
+        if (card) {
+            card.remove();
+        }
+
+        updateResultsCount(
+            `${document.querySelectorAll(".ticketCard").length} tickets remaining`
+        );
+
+        console.log(
+            `Ticket ${ticketId} closed successfully`
+        );
+
+    }
+    catch (err) {
+
+        console.error(
+            "Unable to close ticket",
+            ticketId,
+            err
+        );
+    }
+}
+
+function escapeCsvValue(value) {
+    const stringValue = String(value ?? "");
+    return `"${stringValue.replace(/"/g, '""')}"`;
+}
+
+function exportCSV() {
+
+    const rows = [];
+
+    rows.push([
+        "Ticket",
+        "Registration",
+        "Status",
+        "Confidence",
+        "Lease Company",
+        "Summary"
+    ]);
+
+    analysedTickets.forEach(
+        item => {
+            rows.push([
+                item.ticket.id,
+                item.result.registration || "",
+                item.result.status || "",
+                item.result.confidence || "",
+                getLeaseCompanyDisplay(item.result, item.ticket),
+                item.result.summary || item.result.reason || ""
+            ]);
+        }
+    );
+
+    const csv =
+        rows
+            .map(
+                row => row.map(escapeCsvValue).join(",")
+            )
+            .join("\n");
+
+    const blob =
+        new Blob(
+            [csv],
+            {
+                type: "text/csv;charset=utf-8;"
+            }
+        );
+
+    const link =
+        document.createElement("a");
+
+    link.href =
+        URL.createObjectURL(blob);
+
+    link.download =
+        "ticket-analysis.csv";
+
+    link.click();
+}
